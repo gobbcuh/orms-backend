@@ -6,6 +6,7 @@ DROP DATABASE IF EXISTS orms_db;
 CREATE DATABASE orms_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 USE orms_db;
+
 -- ============================================================================
 
 -- LOOKUP TABLES (tables with no foreign keys)
