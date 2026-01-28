@@ -111,6 +111,7 @@ def format_patient_response(patient_data, visit_data=None, doctor_data=None):
         'email': patient_data.get('email', ''),
         'address': patient_data.get('address', ''),
         'emergencyContact': patient_data.get('emergency_contact_name', ''),
+        'emergencyContactRelationship': patient_data.get('emergency_contact_relationship', ''),
         'emergencyPhone': patient_data.get('emergency_contact_phone', ''),
         'registrationTime': format_time_12hr(visit_datetime.time()) if visit_datetime else '-',
         'registrationDate': format_datetime_iso(visit_datetime) if visit_datetime else None,

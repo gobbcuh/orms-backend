@@ -39,6 +39,7 @@ def get_patients(current_user):
                 p.email,
                 p.address,
                 p.emergency_contact_name,
+                p.emergency_contact_relationship,
                 p.emergency_contact_phone,
                 s.name as sex_name,
                 v.visit_id,
@@ -180,9 +181,9 @@ def create_patient(current_user):
         patient_query = """
             INSERT INTO patients (
                 patient_id, first_name, last_name, date_of_birth, sex_id,
-                phone, email, address, emergency_contact_name, 
+                phone, email, address, emergency_contact_name, emergency_contact_relationship,
                 emergency_contact_phone, created_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
         """
         
         patient_params = (
@@ -195,6 +196,7 @@ def create_patient(current_user):
             data.get('email', ''),
             data.get('address', ''),
             data.get('emergencyContact', ''),
+            data.get('emergencyContactRelationship', ''),
             data.get('emergencyPhone', '')
         )
         
@@ -294,6 +296,7 @@ def create_patient(current_user):
                 p.email,
                 p.address,
                 p.emergency_contact_name,
+                p.emergency_contact_relationship,
                 p.emergency_contact_phone,
                 s.name as sex_name,
                 v.visit_id,
@@ -396,6 +399,7 @@ def get_patient(current_user, patient_id):
                 p.email,
                 p.address,
                 p.emergency_contact_name,
+                p.emergency_contact_relationship,
                 p.emergency_contact_phone,
                 s.name as sex_name,
                 v.visit_id,
@@ -535,6 +539,7 @@ def update_patient_status(current_user, patient_id):
                 p.email,
                 p.address,
                 p.emergency_contact_name,
+                p.emergency_contact_relationship,
                 p.emergency_contact_phone,
                 s.name as sex_name,
                 v.visit_id,
@@ -604,6 +609,7 @@ def get_queue_patients(current_user):
                 p.email,
                 p.address,
                 p.emergency_contact_name,
+                p.emergency_contact_relationship,
                 p.emergency_contact_phone,
                 s.name as sex_name,
                 v.visit_id,
@@ -772,6 +778,10 @@ def update_patient(current_user, patient_id):
             patient_updates.append("emergency_contact_name = %s")
             patient_params.append(data['emergencyContact'])
         
+        if data.get('emergencyContactRelationship'):
+            patient_updates.append("emergency_contact_relationship = %s")
+            patient_params.append(data['emergencyContactRelationship'])
+        
         if data.get('emergencyPhone'):
             patient_updates.append("emergency_contact_phone = %s")
             patient_params.append(data['emergencyPhone'])
@@ -868,6 +878,7 @@ def update_patient(current_user, patient_id):
                 p.email,
                 p.address,
                 p.emergency_contact_name,
+                p.emergency_contact_relationship,
                 p.emergency_contact_phone,
                 s.name as sex_name,
                 v.visit_id,
