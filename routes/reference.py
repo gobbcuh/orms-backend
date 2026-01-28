@@ -5,30 +5,61 @@ from utils.formatters import format_service_response
 
 reference_bp = Blueprint('reference', __name__)
 
+@reference_bp.route('/api/departments', methods=['GET'])
+@token_required
+def get_departments(current_user):
+    """Get list of all departments"""
+    try:
+        query = """
+            SELECT department_id, name, code, description
+            FROM departments
+            ORDER BY name
+        """
+        results = Database.execute_query(query)
+        return jsonify(results), 200
+    except Exception as e:
+        print(f"Error getting departments: {e}")
+        return jsonify({'error': 'Failed to retrieve departments'}), 500
+
+
+@reference_bp.route('/api/doctors/by-department/<department_id>', methods=['GET'])
+@token_required
+def get_doctors_by_department(current_user, department_id):
+    """Get doctors in a specific department"""
+    try:
+        query = """
+            SELECT 
+                doctor_id,
+                CONCAT(first_name, ' ', last_name) as full_name
+            FROM doctors
+            WHERE department_id = %s
+            ORDER BY first_name, last_name
+        """
+        results = Database.execute_query(query, (department_id,))
+        doctors = [row['full_name'] for row in results]
+        return jsonify(doctors), 200
+    except Exception as e:
+        print(f"Error getting doctors by department: {e}")
+        return jsonify({'error': 'Failed to retrieve doctors'}), 500
+    
 
 @reference_bp.route('/api/doctors', methods=['GET'])
 @token_required
 def get_doctors(current_user):
-    """
-    Get list of all doctors
-    
-    Response:
-        Array of doctor name strings
-        Example: ["Dr. Policarpio", "Dr. Dalusong", ...]
-    """
+    """Get list of all doctors with department info"""
     try:
         query = """
-            SELECT CONCAT(first_name, ' ', last_name) as full_name
-            FROM doctors
-            ORDER BY first_name, last_name
+            SELECT 
+                d.doctor_id,
+                CONCAT(d.first_name, ' ', d.last_name) as full_name,
+                dept.name as department_name,
+                dept.department_id
+            FROM doctors d
+            LEFT JOIN departments dept ON d.department_id = dept.department_id
+            ORDER BY dept.name, d.first_name, d.last_name
         """
-        
         results = Database.execute_query(query)
-        
-        doctors = [row['full_name'] for row in results]
-        
-        return jsonify(doctors), 200
-        
+        return jsonify(results), 200
     except Exception as e:
         print(f"Error getting doctors: {e}")
         return jsonify({'error': 'Failed to retrieve doctors'}), 500
