@@ -70,6 +70,39 @@ def is_today(dt_value):
     return dt_value.date() == date.today()
 
 
+def format_smart_datetime(dt_value):
+    """
+    Format datetime with smart display:
+    - Today: "Today, 2:30 PM"
+    - Yesterday: "Yesterday, 2:30 PM"
+    - Older: "Jan 26, 2026 2:30 PM"
+    """
+    if not dt_value:
+        return '-'
+    
+    if isinstance(dt_value, str):
+        dt_value = datetime.fromisoformat(dt_value.replace('Z', '+00:00'))
+    
+    today = date.today()
+    dt_date = dt_value.date()
+    
+    # Calculate days difference
+    days_diff = (today - dt_date).days
+    
+    # Format time part (12-hour format)
+    time_str = dt_value.strftime("%I:%M %p").lstrip('0')
+    
+    # Smart date formatting
+    if days_diff == 0:
+        return f"Today, {time_str}"
+    elif days_diff == 1:
+        return f"Yesterday, {time_str}"
+    else:
+        # Format as "Jan 26, 2026 2:30 PM"
+        date_str = dt_value.strftime("%b %d, %Y")
+        return f"{date_str} {time_str}"
+
+
 # ============================================================================
 # PATIENT FORMATTING
 
@@ -113,7 +146,7 @@ def format_patient_response(patient_data, visit_data=None, doctor_data=None):
         'emergencyContact': patient_data.get('emergency_contact_name', ''),
         'emergencyContactRelationship': patient_data.get('emergency_contact_relationship', ''),
         'emergencyPhone': patient_data.get('emergency_contact_phone', ''),
-        'registrationTime': format_time_12hr(visit_datetime.time()) if visit_datetime else '-',
+        'registrationTime': format_smart_datetime(visit_datetime) if visit_datetime else '-',
         'registrationDate': format_datetime_iso(visit_datetime) if visit_datetime else None,
         'status': visit_data.get('status_name', 'waiting') if visit_data else 'waiting',
         'assignedDoctor': doctor_name,
