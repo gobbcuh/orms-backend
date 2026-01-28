@@ -7,6 +7,8 @@ CREATE DATABASE orms_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 USE orms_db;
 
+DESCRIBE patients;
+SELECT * from patients;
 -- ============================================================================
 
 -- LOOKUP TABLES (tables with no foreign keys)

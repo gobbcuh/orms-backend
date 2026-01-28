@@ -42,6 +42,7 @@ def get_patients(current_user):
                 p.emergency_contact_relationship,
                 p.emergency_contact_phone,
                 s.name as sex_name,
+                gi.name as gender_identity_name,
                 v.visit_id,
                 v.visit_datetime,
                 v.check_in_datetime,
@@ -52,6 +53,7 @@ def get_patients(current_user):
                 d.last_name as doctor_last_name
             FROM patients p
             LEFT JOIN sex s ON p.sex_id = s.sex_id
+            LEFT JOIN gender_identities gi ON p.gender_identity_id = gi.gender_identity_id   -- ADD THIS
             LEFT JOIN (
                 -- Get most recent visit for each patient
                 SELECT v1.*
@@ -172,18 +174,29 @@ def create_patient(current_user):
         import uuid
         patient_id = f"PAT-{uuid.uuid4().hex[:6].upper()}"
         
-        # Get sex_id from gender
-        gender = data['gender'].lower()
-        sex_map = {'male': 1, 'female': 2, 'other': 3}
-        sex_id = sex_map.get(gender, 1)
+        # Get sex_id from biological sex
+        sex = data.get('sex', 'male').lower()
+        sex_map = {'male': 1, 'female': 2}
+        sex_id = sex_map.get(sex, 1)
+
+        # Get gender_identity_id from gender identity
+        gender = data.get('gender', 'male').lower()
+        gender_map = {
+            'male': 1,
+            'female': 2,
+            'non-binary': 3,
+            'prefer not to say': 4,
+            'other': 5
+        }
+        gender_identity_id = gender_map.get(gender, 4)  # Default to "Prefer not to say"
         
         # Step 1: Create patient record
         patient_query = """
             INSERT INTO patients (
-                patient_id, first_name, last_name, date_of_birth, sex_id,
+                patient_id, first_name, last_name, date_of_birth, sex_id, gender_identity_id,
                 phone, email, address, emergency_contact_name, emergency_contact_relationship,
                 emergency_contact_phone, created_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
         """
         
         patient_params = (
@@ -192,6 +205,7 @@ def create_patient(current_user):
             data['lastName'],
             data['dateOfBirth'],
             sex_id,
+            gender_identity_id,
             data.get('phone', ''),
             data.get('email', ''),
             data.get('address', ''),
@@ -299,6 +313,7 @@ def create_patient(current_user):
                 p.emergency_contact_relationship,
                 p.emergency_contact_phone,
                 s.name as sex_name,
+                gi.name as gender_identity_name,
                 v.visit_id,
                 v.visit_datetime,
                 v.check_in_datetime,
@@ -309,6 +324,7 @@ def create_patient(current_user):
                 d.last_name as doctor_last_name
             FROM patients p
             LEFT JOIN sex s ON p.sex_id = s.sex_id
+            LEFT JOIN gender_identities gi ON p.gender_identity_id = gi.gender_identity_id
             LEFT JOIN visits v ON p.patient_id = v.patient_id AND v.visit_id = %s
             LEFT JOIN visit_status vs ON v.status_id = vs.status_id
             LEFT JOIN doctors d ON v.doctor_id = d.doctor_id
@@ -402,6 +418,7 @@ def get_patient(current_user, patient_id):
                 p.emergency_contact_relationship,
                 p.emergency_contact_phone,
                 s.name as sex_name,
+                gi.name as gender_identity_name,
                 v.visit_id,
                 v.visit_datetime,
                 v.check_in_datetime,
@@ -412,6 +429,7 @@ def get_patient(current_user, patient_id):
                 d.last_name as doctor_last_name
             FROM patients p
             LEFT JOIN sex s ON p.sex_id = s.sex_id
+            LEFT JOIN gender_identities gi ON p.gender_identity_id = gi.gender_identity_id
             LEFT JOIN (
                 SELECT v1.*
                 FROM visits v1
@@ -423,6 +441,7 @@ def get_patient(current_user, patient_id):
                 ) v2 ON v1.patient_id = v2.patient_id 
                     AND v1.visit_datetime = v2.max_date
             ) v ON p.patient_id = v.patient_id
+            LEFT JOIN gender_identities gi ON p.gender_identity_id = gi.gender_identity_id
             LEFT JOIN visit_status vs ON v.status_id = vs.status_id
             LEFT JOIN doctors d ON v.doctor_id = d.doctor_id
             WHERE p.patient_id = %s
@@ -542,6 +561,7 @@ def update_patient_status(current_user, patient_id):
                 p.emergency_contact_relationship,
                 p.emergency_contact_phone,
                 s.name as sex_name,
+                gi.name as gender_identity_name,
                 v.visit_id,
                 v.visit_datetime,
                 v.check_in_datetime,
@@ -612,6 +632,7 @@ def get_queue_patients(current_user):
                 p.emergency_contact_relationship,
                 p.emergency_contact_phone,
                 s.name as sex_name,
+                gi.name as gender_identity_name,
                 v.visit_id,
                 v.visit_datetime,
                 v.check_in_datetime,
@@ -621,6 +642,7 @@ def get_queue_patients(current_user):
                 d.last_name as doctor_last_name
             FROM patients p
             LEFT JOIN sex s ON p.sex_id = s.sex_id
+            LEFT JOIN gender_identities gi ON p.gender_identity_id = gi.gender_identity_id
             LEFT JOIN (
                 SELECT v1.*
                 FROM visits v1
@@ -631,6 +653,7 @@ def get_queue_patients(current_user):
                 ) v2 ON v1.patient_id = v2.patient_id 
                     AND v1.visit_datetime = v2.max_date
             ) v ON p.patient_id = v.patient_id
+            LEFT JOIN gender_identities gi ON p.gender_identity_id = gi.gender_identity_id
             LEFT JOIN visit_status vs ON v.status_id = vs.status_id
             LEFT JOIN doctors d ON v.doctor_id = d.doctor_id
             WHERE vs.name IN ('waiting', 'checked-in')
@@ -786,12 +809,27 @@ def update_patient(current_user, patient_id):
             patient_updates.append("emergency_contact_phone = %s")
             patient_params.append(data['emergencyPhone'])
         
+        # Handle biological sex update
+        if data.get('sex'):
+            sex = data['sex'].lower()
+            sex_map = {'male': 1, 'female': 2}
+            if sex in sex_map:
+                patient_updates.append("sex_id = %s")
+                patient_params.append(sex_map[sex])
+        
+        # Handle gender identity update
         if data.get('gender'):
             gender = data['gender'].lower()
-            sex_map = {'male': 1, 'female': 2, 'other': 3}
-            if gender in sex_map:
-                patient_updates.append("sex_id = %s")
-                patient_params.append(sex_map[gender])
+            gender_map = {
+                'male': 1,
+                'female': 2,
+                'non-binary': 3,
+                'prefer not to say': 4,
+                'other': 5
+            }
+            if gender in gender_map:
+                patient_updates.append("gender_identity_id = %s")
+                patient_params.append(gender_map[gender])
         
         if patient_updates:
             patient_query = f"""
@@ -881,6 +919,7 @@ def update_patient(current_user, patient_id):
                 p.emergency_contact_relationship,
                 p.emergency_contact_phone,
                 s.name as sex_name,
+                gi.name as gender_identity_name,
                 v.visit_id,
                 v.visit_datetime,
                 v.check_in_datetime,
@@ -891,6 +930,7 @@ def update_patient(current_user, patient_id):
                 d.last_name as doctor_last_name
             FROM patients p
             LEFT JOIN sex s ON p.sex_id = s.sex_id
+            LEFT JOIN gender_identities gi ON p.gender_identity_id = gi.gender_identity_id
             LEFT JOIN (
                 SELECT v1.*
                 FROM visits v1
