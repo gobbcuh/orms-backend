@@ -8,6 +8,58 @@ from datetime import datetime
 patients_bp = Blueprint('patients', __name__)
 
 
+# ============================================================================
+# HELPER FUNCTION: Checks if doctor has a checked-in patient
+
+def doctor_has_checked_in_patient(doctor_id):
+    """
+    Check if a doctor currently has a patient in 'checked-in' status TODAY
+    
+    Args:
+        doctor_id: The doctor's ID to check
+        
+    Returns:
+        Dictionary with 'has_patient' boolean and 'patient_name' if exists
+    """
+    try:
+        query = """
+            SELECT 
+                p.patient_id,
+                CONCAT(p.first_name, ' ', p.last_name) as patient_name,
+                v.visit_id
+            FROM visits v
+            INNER JOIN patients p ON v.patient_id = p.patient_id
+            INNER JOIN visit_status vs ON v.status_id = vs.status_id
+            WHERE v.doctor_id = %s
+            AND vs.name = 'checked-in'
+            AND DATE(v.visit_datetime) = CURDATE()
+            LIMIT 1
+        """
+        
+        result = Database.execute_query(query, (doctor_id,))
+        
+        if result and len(result) > 0:
+            return {
+                'has_patient': True,
+                'patient_name': result[0]['patient_name'],
+                'patient_id': result[0]['patient_id']
+            }
+        else:
+            return {
+                'has_patient': False,
+                'patient_name': None,
+                'patient_id': None
+            }
+            
+    except Exception as e:
+        print(f"Error checking doctor status: {e}")
+        return {
+            'has_patient': False,
+            'patient_name': None,
+            'patient_id': None
+        }
+
+
 @patients_bp.route('/api/patients', methods=['GET'])
 @token_required
 def get_patients(current_user):
@@ -487,6 +539,7 @@ def get_patient(current_user, patient_id):
 def update_patient_status(current_user, patient_id):
     """
     Update patient's visit status (for check-in)
+    WITH VALIDATION: Prevents multiple check-ins per doctor
     
     Request Body:
         {
@@ -508,7 +561,44 @@ def update_patient_status(current_user, patient_id):
         if new_status not in valid_statuses:
             return jsonify({'error': 'Invalid status'}), 400
         
-        # getting status_id from visit_status table
+        # ================================================================
+        # NEW: VALIDATION - If checking in, verify doctor is free
+
+        if new_status == 'checked-in':
+            doctor_query = """
+                SELECT 
+                    v.doctor_id,
+                    CONCAT(d.first_name, ' ', d.last_name) as doctor_name
+                FROM visits v
+                INNER JOIN doctors d ON v.doctor_id = d.doctor_id
+                WHERE v.patient_id = %s
+                ORDER BY v.visit_datetime DESC
+                LIMIT 1
+            """
+            
+            doctor_result = Database.execute_query(doctor_query, (patient_id,), fetch_one=True)
+            
+            if not doctor_result:
+                return jsonify({'error': 'No doctor assigned to this patient'}), 404
+            
+            doctor_id = doctor_result['doctor_id']
+            doctor_name = doctor_result['doctor_name']
+            
+            # checks if doctor already has a checked-in patient
+            doctor_status = doctor_has_checked_in_patient(doctor_id)
+            
+            if doctor_status['has_patient']:
+                # Check if the checked-in patient is THIS patient (allow re-checking)
+                if doctor_status['patient_id'] != patient_id:
+                    return jsonify({
+                        'error': f"{doctor_name} is currently with another patient. Please wait until the current consultation is completed."
+                    }), 400
+        
+        # ================================================================
+        # PROCEED WITH STATUS UPDATE (validation passed or not checking in)
+        # ================================================================
+        
+        # Get status_id from visit_status table
         status_query = "SELECT status_id FROM visit_status WHERE name = %s"
         status_result = Database.execute_query(status_query, (new_status,), fetch_one=True)
         
@@ -517,7 +607,6 @@ def update_patient_status(current_user, patient_id):
         
         status_id = status_result['status_id']
         
-        # getting the most recent visit_id for this patient
         get_visit_query = """
             SELECT visit_id
             FROM visits
@@ -533,7 +622,7 @@ def update_patient_status(current_user, patient_id):
         
         visit_id = visit_result['visit_id']
         
-        # updating specific visit
+        # Update specific visit
         update_query = """
             UPDATE visits
             SET status_id = %s,
@@ -572,6 +661,7 @@ def update_patient_status(current_user, patient_id):
                 d.last_name as doctor_last_name
             FROM patients p
             LEFT JOIN sex s ON p.sex_id = s.sex_id
+            LEFT JOIN gender_identities gi ON p.gender_identity_id = gi.gender_identity_id
             LEFT JOIN visits v ON p.patient_id = v.patient_id AND v.visit_id = %s
             LEFT JOIN visit_status vs ON v.status_id = vs.status_id
             LEFT JOIN doctors d ON v.doctor_id = d.doctor_id
@@ -584,7 +674,6 @@ def update_patient_status(current_user, patient_id):
         if not result:
             return jsonify({'error': 'Patient not found'}), 404
         
-        # Format response
         visit_data = {
             'visit_datetime': result['visit_datetime'],
             'check_in_datetime': result['check_in_datetime'],
@@ -606,6 +695,8 @@ def update_patient_status(current_user, patient_id):
         
     except Exception as e:
         print(f"Error updating patient status: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': 'Failed to update patient status'}), 500
 
 
