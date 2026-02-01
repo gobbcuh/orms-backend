@@ -2,7 +2,7 @@ import uuid
 from flask import Blueprint, request, jsonify
 from config import Database
 from utils.auth import token_required
-from utils.formatters import format_patient_response
+from utils.formatters import format_patient_response, format_doctor_name
 from datetime import datetime
 
 patients_bp = Blueprint('patients', __name__)
@@ -568,7 +568,8 @@ def update_patient_status(current_user, patient_id):
             doctor_query = """
                 SELECT 
                     v.doctor_id,
-                    CONCAT(d.first_name, ' ', d.last_name) as doctor_name
+                    d.first_name,
+                    d.last_name
                 FROM visits v
                 INNER JOIN doctors d ON v.doctor_id = d.doctor_id
                 WHERE v.patient_id = %s
@@ -582,7 +583,13 @@ def update_patient_status(current_user, patient_id):
                 return jsonify({'error': 'No doctor assigned to this patient'}), 404
             
             doctor_id = doctor_result['doctor_id']
-            doctor_name = doctor_result['doctor_name']
+            
+            # doctor name with "Dr." prefix
+            from utils.formatters import format_doctor_name
+            doctor_name = format_doctor_name(
+                doctor_result['first_name'],
+                doctor_result['last_name']
+            )
             
             # checks if doctor already has a checked-in patient
             doctor_status = doctor_has_checked_in_patient(doctor_id)

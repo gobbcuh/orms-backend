@@ -30,13 +30,17 @@ def get_doctors_by_department(current_user, department_id):
         query = """
             SELECT 
                 doctor_id,
-                CONCAT(first_name, ' ', last_name) as full_name
+                first_name,
+                last_name
             FROM doctors
             WHERE department_id = %s
             ORDER BY first_name, last_name
         """
         results = Database.execute_query(query, (department_id,))
-        doctors = [row['full_name'] for row in results]
+        
+        from utils.formatters import format_doctor_name
+        doctors = [format_doctor_name(row['first_name'], row['last_name']) for row in results]
+        
         return jsonify(doctors), 200
     except Exception as e:
         print(f"Error getting doctors by department: {e}")
@@ -51,7 +55,8 @@ def get_doctors(current_user):
         query = """
             SELECT 
                 d.doctor_id,
-                CONCAT(d.first_name, ' ', d.last_name) as full_name,
+                d.first_name,
+                d.last_name,
                 dept.name as department_name,
                 dept.department_id
             FROM doctors d
@@ -59,7 +64,21 @@ def get_doctors(current_user):
             ORDER BY dept.name, d.first_name, d.last_name
         """
         results = Database.execute_query(query)
-        return jsonify(results), 200
+        
+        from utils.formatters import format_doctor_name
+        
+        formatted_results = []
+        for row in results:
+            formatted_results.append({
+                'doctor_id': row['doctor_id'],
+                'full_name': format_doctor_name(row['first_name'], row['last_name']),
+                'first_name': row['first_name'],
+                'last_name': row['last_name'],
+                'department_name': row['department_name'],
+                'department_id': row['department_id']
+            })
+        
+        return jsonify(formatted_results), 200
     except Exception as e:
         print(f"Error getting doctors: {e}")
         return jsonify({'error': 'Failed to retrieve doctors'}), 500

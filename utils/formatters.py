@@ -123,10 +123,13 @@ def format_patient_response(patient_data, visit_data=None, doctor_data=None):
     if visit_data and visit_data.get('visit_datetime'):
         visit_datetime = visit_data['visit_datetime']
     
-    # doctor name
+    # doctor name with "Dr." prefix
     doctor_name = None
     if doctor_data:
-        doctor_name = f"{doctor_data.get('first_name', '')} {doctor_data.get('last_name', '')}".strip()
+        doctor_name = format_doctor_name(
+            doctor_data.get('first_name'),
+            doctor_data.get('last_name')
+        )
     
     # follow-up date
     followup_date = None
@@ -234,8 +237,25 @@ def format_dashboard_stats(stats_data):
 # REFERENCE DATA FORMATTING
 
 def format_doctor_name(first_name, last_name):
-    """Format doctor name"""
-    return f"{first_name} {last_name}".strip()
+    """
+    Format doctor name with 'Dr.' prefix
+    
+    Args:
+        first_name: Doctor's first name
+        last_name: Doctor's last name
+        
+    Returns:
+        Formatted string: "Dr. FirstName LastName"
+    """
+    if not first_name and not last_name:
+        return None
+    
+    full_name = f"{first_name or ''} {last_name or ''}".strip()
+    
+    if full_name:
+        return f"Dr. {full_name}"
+    
+    return None
 
 
 def format_service_response(service_data):
