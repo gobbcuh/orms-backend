@@ -180,58 +180,82 @@ def get_patients(current_user):
     except Exception as e:
         print(f"Error getting patients: {e}")
         return jsonify({'error': 'Failed to retrieve patients'}), 500
+    
 
 @patients_bp.route('/api/patients', methods=['POST'])
 @token_required
 def create_patient(current_user):
     """
     Register new patient (creates patient + visit + invoice)
-    
-    Request Body:
-        {
-            "firstName": "John",
-            "lastName": "Doe",
-            "dateOfBirth": "1990-05-15",
-            "gender": "male",
-            "phone": "+63-917-123-4567",
-            "email": "john@email.com",
-            "address": "123 Street, City",
-            "emergencyContact": "Jane Doe",
-            "emergencyPhone": "+63-917-765-4321",
-            "assignedDoctor": "Dr. Policarpio",
-            "hasFollowUp": false,
-            "followUpDate": null,
-            "medicalNotes": "No known allergies"
-        }
-    
-    Response:
-        {
-            "patient": { patient object },
-            "invoice": { invoice object }
-        }
+    Uses TRANSACTION to ensure all-or-nothing behavior
     """
+    
+    connection = None
+    cursor = None
+    
     try:
         data = request.get_json()
         
         if not data:
             return jsonify({'error': 'No data provided'}), 400
         
-        # Validate required fields
         required_fields = ['firstName', 'lastName', 'dateOfBirth', 'gender', 'phone']
         for field in required_fields:
             if not data.get(field):
                 return jsonify({'error': f'{field} is required'}), 400
         
-        # Generate unique patient ID
+        # ================================================================
+        # STEP 0: Validate doctor BEFORE starting transaction
+        
+        doctor_id = None
+        if data.get('assignedDoctor'):
+            doctor_name = data['assignedDoctor']
+            if doctor_name.startswith('Dr. '):
+                doctor_name = doctor_name[4:]
+            
+            doctor_name_parts = doctor_name.split(' ', 1)
+            if len(doctor_name_parts) == 2:
+                doctor_query = """
+                    SELECT doctor_id 
+                    FROM doctors 
+                    WHERE first_name = %s AND last_name = %s
+                    LIMIT 1
+                """
+                doctor_result = Database.execute_query(
+                    doctor_query, 
+                    (doctor_name_parts[0], doctor_name_parts[1]), 
+                    fetch_one=True
+                )
+                if doctor_result:
+                    doctor_id = doctor_result['doctor_id']
+        
+        if not doctor_id:
+            return jsonify({
+                'error': f'Doctor "{data.get("assignedDoctor", "")}" not found. Please select a valid doctor.'
+            }), 400
+        
+        # ================================================================
+        # BEGIN TRANSACTION - All-or-nothing from here
+        
+        # Get manual database connection for transaction control
+        connection = Database.get_connection()
+        cursor = connection.cursor(dictionary=True)
+        
+        # Start transaction
+        connection.start_transaction()
+        
+        # Generate IDs
         import uuid
         patient_id = f"PAT-{uuid.uuid4().hex[:6].upper()}"
+        visit_id = f"VIS-{uuid.uuid4().hex[:6].upper()}"
+        bill_id = f"BILL-{uuid.uuid4().hex[:6].upper()}"
+        service_id = f"SVC-{uuid.uuid4().hex[:6].upper()}"
         
-        # Get sex_id from biological sex
+        # Get sex_id and gender_identity_id
         sex = data.get('sex', 'male').lower()
         sex_map = {'male': 1, 'female': 2}
         sex_id = sex_map.get(sex, 1)
-
-        # Get gender_identity_id from gender identity
+        
         gender = data.get('gender', 'male').lower()
         gender_map = {
             'male': 1,
@@ -240,9 +264,11 @@ def create_patient(current_user):
             'prefer not to say': 4,
             'other': 5
         }
-        gender_identity_id = gender_map.get(gender, 4)  # Default to "Prefer not to say"
+        gender_identity_id = gender_map.get(gender, 4)
         
-        # Step 1: Create patient record
+        # ================================================================
+        # STEP 1: Create patient record (NOT committed yet)
+        
         patient_query = """
             INSERT INTO patients (
                 patient_id, first_name, last_name, date_of_birth, sex_id, gender_identity_id,
@@ -266,39 +292,18 @@ def create_patient(current_user):
             data.get('emergencyPhone', '')
         )
         
-        Database.execute_query(patient_query, patient_params, commit=True)
+        cursor.execute(patient_query, patient_params)
         
-        # Step 2: Get doctor_id if assigned
-        doctor_id = None
-        if data.get('assignedDoctor'):
-            doctor_name_parts = data['assignedDoctor'].split(' ', 1)
-            if len(doctor_name_parts) == 2:
-                doctor_query = """
-                    SELECT doctor_id 
-                    FROM doctors 
-                    WHERE first_name = %s AND last_name = %s
-                    LIMIT 1
-                """
-                doctor_result = Database.execute_query(
-                    doctor_query, 
-                    (doctor_name_parts[0], doctor_name_parts[1]), 
-                    fetch_one=True
-                )
-                if doctor_result:
-                    doctor_id = doctor_result['doctor_id']
+        # ================================================================
+        # STEP 2: Create visit record (NOT committed yet)
         
-        # Step 3: Create visit record
-        visit_id = f"VIS-{uuid.uuid4().hex[:6].upper()}"
         visit_datetime = datetime.now()
-        
-        # Get followup date if provided
-        followup_date = data.get('followUpDate') if data.get('hasFollowUp') else None
         
         visit_query = """
             INSERT INTO visits (
                 visit_id, patient_id, doctor_id, visit_datetime,
-                status_id, notes, followup_date, created_at, created_by_user_id
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), %s)
+                status_id, notes, created_at, created_by_user_id
+            ) VALUES (%s, %s, %s, %s, %s, %s, NOW(), %s)
         """
         
         visit_params = (
@@ -306,20 +311,19 @@ def create_patient(current_user):
             patient_id,
             doctor_id,
             visit_datetime,
-            1,  # status_id = 1 (waiting)
+            1,
             data.get('medicalNotes', ''),
-            followup_date,
             current_user['user_id']
         )
         
-        Database.execute_query(visit_query, visit_params, commit=True)
+        cursor.execute(visit_query, visit_params)
         
-        # Step 4: Create bill/invoice with consultation fee
-        bill_id = f"BILL-{uuid.uuid4().hex[:6].upper()}"
+        # ================================================================
+        # STEP 3: Create bill/invoice (NOT committed yet)
         
-        # Get consultation service price
-        service_query = "SELECT price FROM services WHERE service_id = 'consultation' LIMIT 1"
-        service_result = Database.execute_query(service_query, fetch_one=True)
+        # Get consultation price
+        cursor.execute("SELECT price FROM services WHERE service_id = 'consultation' LIMIT 1")
+        service_result = cursor.fetchone()
         consultation_price = float(service_result['price']) if service_result else 150.00
         
         subtotal = consultation_price
@@ -334,10 +338,10 @@ def create_patient(current_user):
         """
         
         bill_params = (bill_id, visit_id, patient_id, subtotal, tax, total)
-        Database.execute_query(bill_query, bill_params, commit=True)
+        cursor.execute(bill_query, bill_params)
         
-        # Step 5: Add consultation service to bill_services
-        service_id = f"SVC-{uuid.uuid4().hex[:6].upper()}"
+        # ================================================================
+        # STEP 4: Add consultation service (NOT committed yet)
         
         bill_service_query = """
             INSERT INTO bill_services (
@@ -345,13 +349,17 @@ def create_patient(current_user):
             ) VALUES (%s, %s, 'Consultation Fee', %s, 1)
         """
         
-        Database.execute_query(
-            bill_service_query, 
-            (service_id, bill_id, consultation_price), 
-            commit=True
-        )
+        cursor.execute(bill_service_query, (service_id, bill_id, consultation_price))
         
-        # Step 6: Fetch and format the created patient
+        # ================================================================
+        # COMMIT TRANSACTION - All steps succeeded!
+        
+        connection.commit()
+        print(f"Patient {patient_id} registered successfully (transaction committed)")
+        
+        # ================================================================
+        # STEP 5: Fetch and format the created patient
+        
         fetch_query = """
             SELECT 
                 p.patient_id,
@@ -408,7 +416,7 @@ def create_patient(current_user):
         
         patient = format_patient_response(patient_result, visit_data, doctor_data)
         
-        # Step 7: Format invoice
+        # Format invoice
         from utils.formatters import format_invoice_id
         
         invoice = {
@@ -434,17 +442,31 @@ def create_patient(current_user):
             'paidDate': None
         }
         
-        # Return both patient and invoice
         return jsonify({
             'patient': patient,
             'invoice': invoice
         }), 201
         
     except Exception as e:
+        # ================================================================
+        # ERROR: ROLLBACK TRANSACTION - Undo everything!
+        
+        if connection:
+            connection.rollback()
+            print(f"Transaction rolled back due to error: {e}")
+        
         print(f"Error creating patient: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({'error': 'Failed to register patient'}), 500
+        
+        return jsonify({'error': 'Failed to register patient. Please try again.'}), 500
+        
+    finally:
+        # Clean up database connection
+        if cursor:
+            cursor.close()
+        if connection:
+            connection.close()
     
 
 @patients_bp.route('/api/patients/<patient_id>', methods=['GET'])
@@ -956,7 +978,11 @@ def update_patient(current_user, patient_id):
             
             # updating doctor
             if data.get('assignedDoctor'):
-                doctor_name_parts = data['assignedDoctor'].split(' ', 1)
+                doctor_name = data['assignedDoctor']
+                if doctor_name.startswith('Dr. '):
+                    doctor_name = doctor_name[4:]
+                
+                doctor_name_parts = doctor_name.split(' ', 1)
                 if len(doctor_name_parts) == 2:
                     doctor_query = """
                         SELECT doctor_id 
