@@ -202,7 +202,7 @@ def format_invoice_response(bill_data, services_data=None, patient_data=None):
         paid_date = format_datetime_iso(bill_data['payment_date'])
     
     return {
-        'id': bill_data.get('bill_id'),
+        'id': format_invoice_id(bill_data.get('bill_id')),
         'patientId': bill_data.get('patient_id'),
         'patientName': patient_name,
         'phone': patient_data.get('phone', '') if patient_data else '',
