@@ -342,14 +342,16 @@ def create_invoice(current_user):
             return jsonify({'error': 'Patient not found'}), 404
         
         # ================================================================
-        # CHECK IF PATIENT HAS EXISTING PENDING INVOICE
+        # CHECK IF PATIENT HAS EXISTING PENDING INVOICE FOR TODAY
         # ================================================================
         
         existing_invoice_query = """
-            SELECT b.bill_id, b.visit_id
+            SELECT b.bill_id, b.visit_id, v.status_id
             FROM bills b
+            INNER JOIN visits v ON b.visit_id = v.visit_id
             WHERE b.patient_id = %s 
             AND LOWER(b.status) = 'pending'
+            AND DATE(b.billing_date) = CURDATE()
             ORDER BY b.billing_date DESC
             LIMIT 1
         """
@@ -360,15 +362,25 @@ def create_invoice(current_user):
             fetch_one=True
         )
         
-        if existing_invoice:
+        # Check if we need to create a new visit
+        # Create new visit if:
+        # 1. No pending invoice exists, OR
+        # 2. Existing invoice's visit is already completed/checked-in
+        should_create_new_visit = (
+            not existing_invoice or 
+            existing_invoice['status_id'] in [2, 3]  # 2=checked-in, 3=completed
+        )
+        
+        if existing_invoice and not should_create_new_visit:
             # ============================================================
-            # PATIENT HAS PENDING INVOICE - ADD SERVICES TO IT
+            # PATIENT HAS PENDING INVOICE WITH WAITING STATUS
+            # ADD SERVICES TO EXISTING INVOICE AND VISIT
             # ============================================================
             
             bill_id = existing_invoice['bill_id']
             visit_id = existing_invoice['visit_id']
             
-            print(f"✅ Found existing invoice {bill_id} for patient {patient_id}")
+            print(f"Found existing WAITING invoice {bill_id} for patient {patient_id}")
             print(f"   Adding {len(data['items'])} service(s) to existing invoice...")
             
             # Add new services to existing invoice
@@ -392,7 +404,7 @@ def create_invoice(current_user):
                 if existing_service:
                     # Service already exists - increase quantity
                     new_quantity = existing_service['quantity'] + item['quantity']
-                    new_amount = item['unitPrice']  # Keep unit price
+                    new_amount = item['unitPrice']
                     
                     update_service_query = """
                         UPDATE bill_services
@@ -455,45 +467,46 @@ def create_invoice(current_user):
             
         else:
             # ============================================================
-            # NO PENDING INVOICE - CREATE NEW ONE
+            # CREATE NEW VISIT AND NEW INVOICE
+            # (Either no pending invoice, or existing visit is completed)
             # ============================================================
             
-            print(f"No existing invoice for patient {patient_id}")
-            print(f"   Creating new invoice with {len(data['items'])} service(s)...")
+            print(f"Creating NEW visit and invoice for patient {patient_id}")
+            print(f"   Reason: {'No pending invoice' if not existing_invoice else 'Existing visit completed'}")
             
-            # getting or creating a visit for this patient
-            visit_query = """
-                SELECT visit_id, doctor_id
+            # Get patient's most recent visit to copy doctor info
+            recent_visit_query = """
+                SELECT doctor_id
                 FROM visits
                 WHERE patient_id = %s
                 ORDER BY visit_datetime DESC
                 LIMIT 1
             """
-            visit = Database.execute_query(visit_query, (patient_id,), fetch_one=True)
+            recent_visit = Database.execute_query(recent_visit_query, (patient_id,), fetch_one=True)
+            doctor_id = recent_visit['doctor_id'] if recent_visit else 'DOC-000001'  # Default doctor
             
-            visit_id = visit['visit_id'] if visit else None
+            # Create NEW visit
+            visit_id = f"VIS-{uuid.uuid4().hex[:6].upper()}"
+            create_visit_query = """
+                INSERT INTO visits (
+                    visit_id, patient_id, doctor_id, visit_datetime, 
+                    status_id, created_at, created_by_user_id
+                ) VALUES (%s, %s, %s, NOW(), 1, NOW(), %s)
+            """
+            Database.execute_query(
+                create_visit_query, 
+                (visit_id, patient_id, doctor_id, current_user['user_id']), 
+                commit=True
+            )
             
-            # if no visit exists, create one
-            if not visit_id:
-                visit_id = f"VIS-{uuid.uuid4().hex[:6].upper()}"
-                create_visit_query = """
-                    INSERT INTO visits (
-                        visit_id, patient_id, visit_datetime, status_id, 
-                        created_at, created_by_user_id
-                    ) VALUES (%s, %s, NOW(), 1, NOW(), %s)
-                """
-                Database.execute_query(
-                    create_visit_query, 
-                    (visit_id, patient_id, current_user['user_id']), 
-                    commit=True
-                )
+            print(f"   ✓ Created new visit: {visit_id}")
             
-            # calculating totals
+            # Calculate totals
             subtotal = sum(item['quantity'] * item['unitPrice'] for item in data['items'])
             tax = subtotal * 0.1
             total = subtotal + tax
             
-            # creating bill
+            # Create NEW bill
             bill_id = f"BILL-{uuid.uuid4().hex[:6].upper()}"
             
             bill_query = """
@@ -509,7 +522,7 @@ def create_invoice(current_user):
                 commit=True
             )
             
-            # adding line items
+            # Add line items
             for item in data['items']:
                 service_id = f"SVC-{uuid.uuid4().hex[:6].upper()}"
                 
@@ -525,7 +538,7 @@ def create_invoice(current_user):
                     commit=True
                 )
             
-            print(f"   ✓ Created new invoice {bill_id}")
+            print(f"   ✓ Created new invoice: {bill_id}")
         
         # ================================================================
         # FETCH AND RETURN THE INVOICE (existing or new)
@@ -548,7 +561,7 @@ def create_invoice(current_user):
         """
         bill_totals = Database.execute_query(bill_query, (bill_id,), fetch_one=True)
         
-        # formatting and returning invoice
+        # Format and return invoice
         invoice_id = format_invoice_id(bill_id)
         
         invoice = {
