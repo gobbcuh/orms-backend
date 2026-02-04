@@ -119,7 +119,7 @@ def get_patients(current_user):
             ) v ON p.patient_id = v.patient_id
             LEFT JOIN visit_status vs ON v.status_id = vs.status_id
             LEFT JOIN doctors d ON v.doctor_id = d.doctor_id
-            WHERE 1=1
+            WHERE p.is_active = TRUE
         """
         
         params = []
@@ -1106,79 +1106,171 @@ def update_patient(current_user, patient_id):
         return jsonify({'error': 'Failed to update patient'}), 500
 
 
+@patients_bp.route('/api/patients/<patient_id>/can-delete', methods=['GET'])
+@token_required
+def check_can_delete(current_user, patient_id):
+    """
+    Check if a patient can be deactivated based on business rules
+    
+    Rules:
+    1. Cannot delete if has completed visits
+    2. Cannot delete if has paid bills
+    3. Cannot delete if registration > 24 hours old
+    
+    Response:
+        {
+            "can_delete": true/false,
+            "reason": "explanation if can't delete"
+        }
+    """
+    try:
+        # Check if patient exists and is active
+        patient_query = """
+            SELECT patient_id, created_at, is_active
+            FROM patients
+            WHERE patient_id = %s
+            LIMIT 1
+        """
+        patient = Database.execute_query(patient_query, (patient_id,), fetch_one=True)
+        
+        if not patient:
+            return jsonify({'error': 'Patient not found'}), 404
+        
+        if not patient['is_active']:
+            return jsonify({
+                'can_delete': False,
+                'reason': 'Patient record already deactivated'
+            }), 200
+        
+        # Rule 1: Check for completed visits
+        completed_visits_query = """
+            SELECT COUNT(*) as count
+            FROM visits v
+            JOIN visit_status vs ON v.status_id = vs.status_id
+            WHERE v.patient_id = %s
+            AND vs.name = 'completed'
+        """
+        completed_result = Database.execute_query(completed_visits_query, (patient_id,), fetch_one=True)
+        
+        if completed_result and completed_result['count'] > 0:
+            return jsonify({
+                'can_delete': False,
+                'reason': 'Cannot delete: Patient has completed visits and medical history (legal retention required)'
+            }), 200
+        
+        # Rule 2: Check for paid bills
+        paid_bills_query = """
+            SELECT COUNT(*) as count
+            FROM bills
+            WHERE patient_id = %s
+            AND LOWER(status) = 'paid'
+        """
+        paid_result = Database.execute_query(paid_bills_query, (patient_id,), fetch_one=True)
+        
+        if paid_result and paid_result['count'] > 0:
+            return jsonify({
+                'can_delete': False,
+                'reason': 'Cannot delete: Patient has payment records (financial retention required)'
+            }), 200
+        
+        # Rule 3: Check registration age (24 hours)
+        from datetime import datetime, timedelta
+        registration_time = patient['created_at']
+        time_since_registration = datetime.now() - registration_time
+        
+        if time_since_registration > timedelta(hours=24):
+            return jsonify({
+                'can_delete': False,
+                'reason': 'Cannot delete: Registration older than 24 hours. Contact administrator if needed.'
+            }), 200
+        
+        # All checks passed
+        return jsonify({
+            'can_delete': True,
+            'reason': None
+        }), 200
+        
+    except Exception as e:
+        print(f"Error checking delete permission: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Failed to check deletion permission'}), 500
+    
+
 @patients_bp.route('/api/patients/<patient_id>', methods=['DELETE'])
 @token_required
 def delete_patient(current_user, patient_id):
     """
-    Delete a patient and all related records
+    Deactivate a patient record (soft delete)
+    
+    Request Body:
+        {
+            "reason": "Duplicate entry" | "Wrong information" | "Test/demo data" | "Other: custom reason"
+        }
     
     Response:
         {
             "success": true,
-            "message": "Patient deleted successfully"
+            "message": "Patient record deactivated successfully"
         }
     """
     try:
-        # checking if patient exists
-        check_query = "SELECT patient_id FROM patients WHERE patient_id = %s LIMIT 1"
+        data = request.get_json()
+        
+        if not data or not data.get('reason'):
+            return jsonify({'error': 'Deactivation reason is required'}), 400
+        
+        reason = data['reason']
+        
+        # Check if patient exists and is active
+        check_query = "SELECT patient_id, is_active FROM patients WHERE patient_id = %s LIMIT 1"
         patient = Database.execute_query(check_query, (patient_id,), fetch_one=True)
         
         if not patient:
             return jsonify({'error': 'Patient not found'}), 404
         
-        # Delete in correct order due to foreign key constraints
-        # 1. Delete bill_services first
+        if not patient['is_active']:
+            return jsonify({'error': 'Patient record already deactivated'}), 400
+        
+        # ================================================================
+        # SOFT DELETE: Mark patient as inactive (don't actually delete)
+        # ================================================================
+        
+        deactivate_patient_query = """
+            UPDATE patients
+            SET is_active = FALSE,
+                deactivated_date = NOW(),
+                deactivated_by_user_id = %s,
+                deactivation_reason = %s
+            WHERE patient_id = %s
+        """
+        
         Database.execute_query(
-            "DELETE FROM bill_services WHERE bill_id IN (SELECT bill_id FROM bills WHERE patient_id = %s)",
-            (patient_id,),
+            deactivate_patient_query,
+            (current_user['user_id'], reason, patient_id),
             commit=True
         )
         
-        # 2. Delete bills
-        Database.execute_query(
-            "DELETE FROM bills WHERE patient_id = %s",
-            (patient_id,),
-            commit=True
-        )
+        # ================================================================
+        # NOTE: Related records (visits, bills) are kept unchanged
+        # They remain linked to the deactivated patient for audit trail
+        # ================================================================
         
-        # 3. Delete diagnoses
-        Database.execute_query(
-            "DELETE FROM diagnoses WHERE visit_id IN (SELECT visit_id FROM visits WHERE patient_id = %s)",
-            (patient_id,),
-            commit=True
-        )
+        print(f"✓ Related records preserved for audit trail")
         
-        # 4. Delete prescriptions
-        Database.execute_query(
-            "DELETE FROM prescriptions WHERE visit_id IN (SELECT visit_id FROM visits WHERE patient_id = %s)",
-            (patient_id,),
-            commit=True
-        )
-        
-        # 5. Delete visits
-        Database.execute_query(
-            "DELETE FROM visits WHERE patient_id = %s",
-            (patient_id,),
-            commit=True
-        )
-        
-        # 6. Finally delete patient
-        Database.execute_query(
-            "DELETE FROM patients WHERE patient_id = %s",
-            (patient_id,),
-            commit=True
-        )
+        print(f"✓ Patient {patient_id} deactivated by {current_user['user_id']}")
+        print(f"  Reason: {reason}")
         
         return jsonify({
             'success': True,
-            'message': 'Patient deleted successfully'
+            'message': 'Patient record deactivated successfully'
         }), 200
         
     except Exception as e:
-        print(f"Error deleting patient: {e}")
+        print(f"Error deactivating patient: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({'error': 'Failed to delete patient'}), 500
+        return jsonify({'error': 'Failed to deactivate patient'}), 500
 
 
 @patients_bp.route('/api/patients/<patient_id>/consultation-status', methods=['GET'])
