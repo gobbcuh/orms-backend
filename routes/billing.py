@@ -440,13 +440,11 @@ def create_invoice(current_user):
         )
         
         # Check if we need to create a new visit
-        # Create new visit if:
-        # 1. No pending invoice exists, OR
-        # 2. Existing invoice's visit is already completed/checked-in
-        should_create_new_visit = (
-            not existing_invoice or 
-            existing_invoice['status_id'] in [2, 3]  # 2=checked-in, 3=completed
-        )
+        # Create new visit ONLY if:
+        # 1. No pending invoice exists for today
+        # 
+        # If there's a pending invoice (even if completed), add to it!
+        should_create_new_visit = not existing_invoice
         
         if existing_invoice and not should_create_new_visit:
             # ============================================================
