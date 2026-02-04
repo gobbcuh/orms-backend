@@ -201,6 +201,9 @@ def format_invoice_response(bill_data, services_data=None, patient_data=None):
     if bill_data.get('payment_date'):
         paid_date = format_datetime_iso(bill_data['payment_date'])
     
+    # visit status (for post-consultation payment enforcement)
+    visit_status = bill_data.get('visit_status_name', 'waiting')
+    
     return {
         'id': format_invoice_id(bill_data.get('bill_id')),
         'patientId': bill_data.get('patient_id'),
@@ -214,6 +217,7 @@ def format_invoice_response(bill_data, services_data=None, patient_data=None):
         'tax': float(bill_data.get('tax', 0)),
         'total': float(bill_data.get('amount_total', 0)),
         'status': bill_data.get('status', 'pending').lower(),
+        'visitStatus': visit_status.lower() if visit_status else 'waiting',
         'paymentMethod': payment_method,
         'paidDate': paid_date,
     }

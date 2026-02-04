@@ -43,12 +43,14 @@ def get_invoices(current_user):
                 p.phone,
                 p.email,
                 pm.name as payment_method_name,
-                CONCAT(d.first_name, ' ', d.last_name) as doctor_name
+                CONCAT(d.first_name, ' ', d.last_name) as doctor_name,
+                vs.name as visit_status_name        -- ← ADD THIS LINE
             FROM bills b
             LEFT JOIN patients p ON b.patient_id = p.patient_id
             LEFT JOIN payment_methods pm ON b.payment_method_id = pm.method_id
             LEFT JOIN visits v ON b.visit_id = v.visit_id
             LEFT JOIN doctors d ON v.doctor_id = d.doctor_id
+            LEFT JOIN visit_status vs ON v.status_id = vs.status_id
             WHERE 1=1
         """
         
@@ -135,12 +137,14 @@ def get_invoice(current_user, invoice_id):
                 p.phone,
                 p.email,
                 pm.name as payment_method_name,
-                CONCAT(d.first_name, ' ', d.last_name) as doctor_name
+                CONCAT(d.first_name, ' ', d.last_name) as doctor_name,
+                vs.name as visit_status_name        -- ← ADD THIS LINE
             FROM bills b
             LEFT JOIN patients p ON b.patient_id = p.patient_id
             LEFT JOIN payment_methods pm ON b.payment_method_id = pm.method_id
             LEFT JOIN visits v ON b.visit_id = v.visit_id
             LEFT JOIN doctors d ON v.doctor_id = d.doctor_id
+            LEFT JOIN visit_status vs ON v.status_id = vs.status_id  -- ← ADD THIS LINE
             WHERE b.bill_id = %s
             LIMIT 1
         """
@@ -258,12 +262,14 @@ def update_invoice(current_user, invoice_id):
                 p.phone,
                 p.email,
                 pm.name as payment_method_name,
-                CONCAT(d.first_name, ' ', d.last_name) as doctor_name
+                CONCAT(d.first_name, ' ', d.last_name) as doctor_name,
+                vs.name as visit_status_name        -- ← ADD THIS LINE
             FROM bills b
             LEFT JOIN patients p ON b.patient_id = p.patient_id
             LEFT JOIN payment_methods pm ON b.payment_method_id = pm.method_id
             LEFT JOIN visits v ON b.visit_id = v.visit_id
             LEFT JOIN doctors d ON v.doctor_id = d.doctor_id
+            LEFT JOIN visit_status vs ON v.status_id = vs.status_id
             WHERE b.bill_id = %s
             LIMIT 1
         """

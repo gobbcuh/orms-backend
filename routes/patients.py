@@ -1179,3 +1179,38 @@ def delete_patient(current_user, patient_id):
         import traceback
         traceback.print_exc()
         return jsonify({'error': 'Failed to delete patient'}), 500
+
+
+@patients_bp.route('/api/patients/<patient_id>/consultation-status', methods=['GET'])
+@token_required
+def get_consultation_status(current_user, patient_id):
+    """
+    Check if patient already has a pending consultation fee today.
+    Used by frontend to enable/disable consultation fee in Add Services modal.
+
+    Response:
+        {
+            "has_pending_consultation": true/false
+        }
+    """
+    try:
+        query = """
+            SELECT bs.service_id
+            FROM bills b
+            INNER JOIN bill_services bs ON b.bill_id = bs.bill_id
+            WHERE b.patient_id = %s
+            AND LOWER(b.status) = 'pending'
+            AND DATE(b.billing_date) = CURDATE()
+            AND bs.service_name = 'Consultation Fee'
+            LIMIT 1
+        """
+
+        result = Database.execute_query(query, (patient_id,), fetch_one=True)
+
+        return jsonify({
+            'has_pending_consultation': result is not None
+        }), 200
+
+    except Exception as e:
+        print(f"Error checking consultation status: {e}")
+        return jsonify({'error': 'Failed to check consultation status'}), 500
