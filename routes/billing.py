@@ -186,9 +186,6 @@ def get_invoice(current_user, invoice_id):
 def get_patient_visits(current_user, patient_id):
     """
     Get all visits for a specific patient
-    
-    Response:
-        Array of visit objects with department, doctor, status, and billing info
     """
     try:
         query = """
@@ -204,7 +201,10 @@ def get_patient_visits(current_user, patient_id):
                 dep.name as department_name,
                 b.bill_id,
                 b.amount_total,
-                b.status as bill_status
+                b.status as bill_status,
+                (SELECT COUNT(*) FROM bill_services bs 
+                 WHERE bs.bill_id = b.bill_id 
+                 AND bs.service_name = 'Follow-up Visit') as is_followup
             FROM visits v
             LEFT JOIN visit_status vs ON v.status_id = vs.status_id
             LEFT JOIN doctors d ON v.doctor_id = d.doctor_id
@@ -219,11 +219,18 @@ def get_patient_visits(current_user, patient_id):
         # Format visits for frontend
         formatted_visits = []
         for visit in visits:
+            if visit['is_followup'] and visit['is_followup'] > 0:
+                reason = 'Follow-Up Visit'
+            elif visit['chief_complaint']:
+                reason = visit['chief_complaint']
+            else:
+                reason = 'Not specified'
+            
             formatted_visit = {
                 'visitId': visit['visit_id'],
                 'visitDate': visit['visit_datetime'].strftime('%b %d, %Y %I:%M %p') if visit['visit_datetime'] else 'N/A',
                 'checkInDate': visit['check_in_datetime'].strftime('%b %d, %Y %I:%M %p') if visit['check_in_datetime'] else None,
-                'chiefComplaint': visit['chief_complaint'] or 'Not specified',
+                'chiefComplaint': reason,
                 'followupDate': visit['followup_date'].strftime('%b %d, %Y') if visit['followup_date'] else None,
                 'statusName': visit['status_name'],
                 'statusId': visit['status_id'],
@@ -683,29 +690,24 @@ def create_invoice(current_user):
 def check_patient_followup(current_user, patient_id):
     """
     Check if patient has a follow-up appointment scheduled for today
-    
-    Response:
-        {
-            "has_followup_today": true/false,
-            "followup_date": "2026-02-04",
-            "previous_visit_id": "VIS-123456",
-            "previous_doctor_id": "DOC-000001",
-            "previous_doctor_name": "Dr. John Smith"
-        }
+    Checks ALL visits, not just the most recent one
     """
     try:
-        # Get most recent visit with follow-up date
+        # Check ALL visits for any follow-up scheduled for today
         query = """
             SELECT 
                 v.visit_id,
                 v.followup_date,
                 v.doctor_id,
+                v.notes as original_complaint,
+                v.visit_datetime as original_visit_date,
                 CONCAT(d.first_name, ' ', d.last_name) as doctor_name,
                 DATE(v.followup_date) = CURDATE() as is_today
             FROM visits v
             LEFT JOIN doctors d ON v.doctor_id = d.doctor_id
             WHERE v.patient_id = %s
             AND v.followup_date IS NOT NULL
+            AND DATE(v.followup_date) = CURDATE()
             ORDER BY v.visit_datetime DESC
             LIMIT 1
         """
@@ -714,9 +716,11 @@ def check_patient_followup(current_user, patient_id):
         
         if result:
             return jsonify({
-                'has_followup_today': bool(result['is_today']),
+                'has_followup_today': True,
                 'followup_date': result['followup_date'].strftime('%Y-%m-%d') if result['followup_date'] else None,
                 'previous_visit_id': result['visit_id'],
+                'previous_visit_date': result['original_visit_date'].strftime('%b %d, %Y') if result['original_visit_date'] else None,
+                'original_complaint': result['original_complaint'],
                 'previous_doctor_id': result['doctor_id'],
                 'previous_doctor_name': result['doctor_name']
             }), 200
@@ -725,6 +729,8 @@ def check_patient_followup(current_user, patient_id):
                 'has_followup_today': False,
                 'followup_date': None,
                 'previous_visit_id': None,
+                'previous_visit_date': None,
+                'original_complaint': None,
                 'previous_doctor_id': None,
                 'previous_doctor_name': None
             }), 200
