@@ -51,7 +51,7 @@ def get_invoices(current_user):
             LEFT JOIN visits v ON b.visit_id = v.visit_id
             LEFT JOIN doctors d ON v.doctor_id = d.doctor_id
             LEFT JOIN visit_status vs ON v.status_id = vs.status_id
-            WHERE 1=1
+            WHERE p.is_active = TRUE
         """
         
         params = []
