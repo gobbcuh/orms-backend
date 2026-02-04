@@ -480,30 +480,42 @@ def create_invoice(current_user):
             print(f"Creating NEW visit and invoice for patient {patient_id}")
             print(f"   Reason: {'No pending invoice' if not existing_invoice else 'Existing visit completed'}")
             
-            # Get patient's most recent visit to copy doctor info
-            recent_visit_query = """
-                SELECT doctor_id
-                FROM visits
-                WHERE patient_id = %s
-                ORDER BY visit_datetime DESC
-                LIMIT 1
-            """
-            recent_visit = Database.execute_query(recent_visit_query, (patient_id,), fetch_one=True)
-            doctor_id = recent_visit['doctor_id'] if recent_visit else 'DOC-000001'  # Default doctor
+            # Get doctor_id from request, or copy from last visit
+            doctor_id = data.get('doctorId')  # Get from frontend
+            
+            if not doctor_id:
+                # No doctor specified - copy from most recent visit
+                recent_visit_query = """
+                    SELECT doctor_id
+                    FROM visits
+                    WHERE patient_id = %s
+                    ORDER BY visit_datetime DESC
+                    LIMIT 1
+                """
+                recent_visit = Database.execute_query(recent_visit_query, (patient_id,), fetch_one=True)
+                doctor_id = recent_visit['doctor_id'] if recent_visit else 'DOC-000001'
+            
+            print(f"   ✓ Using doctor: {doctor_id}")
+            
+            # Get chief complaint from request
+            chief_complaint = data.get('chiefComplaint', '')
             
             # Create NEW visit
             visit_id = f"VIS-{uuid.uuid4().hex[:6].upper()}"
+
             create_visit_query = """
                 INSERT INTO visits (
                     visit_id, patient_id, doctor_id, visit_datetime, 
-                    status_id, created_at, created_by_user_id
-                ) VALUES (%s, %s, %s, NOW(), 1, NOW(), %s)
+                    status_id, notes, created_at, created_by_user_id
+                ) VALUES (%s, %s, %s, NOW(), 1, %s, NOW(), %s)
             """
             Database.execute_query(
                 create_visit_query, 
-                (visit_id, patient_id, doctor_id, current_user['user_id']), 
+                (visit_id, patient_id, doctor_id, chief_complaint, current_user['user_id']), 
                 commit=True
             )
+            
+            print(f"   ✓ Chief complaint: {chief_complaint}")
             
             print(f"   ✓ Created new visit: {visit_id}")
             
