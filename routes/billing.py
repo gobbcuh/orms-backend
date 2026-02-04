@@ -676,3 +676,61 @@ def create_invoice(current_user):
         import traceback
         traceback.print_exc()
         return jsonify({'error': 'Failed to create invoice'}), 500
+    
+
+@billing_bp.route('/api/patients/<patient_id>/followup-check', methods=['GET'])
+@token_required
+def check_patient_followup(current_user, patient_id):
+    """
+    Check if patient has a follow-up appointment scheduled for today
+    
+    Response:
+        {
+            "has_followup_today": true/false,
+            "followup_date": "2026-02-04",
+            "previous_visit_id": "VIS-123456",
+            "previous_doctor_id": "DOC-000001",
+            "previous_doctor_name": "Dr. John Smith"
+        }
+    """
+    try:
+        # Get most recent visit with follow-up date
+        query = """
+            SELECT 
+                v.visit_id,
+                v.followup_date,
+                v.doctor_id,
+                CONCAT(d.first_name, ' ', d.last_name) as doctor_name,
+                DATE(v.followup_date) = CURDATE() as is_today
+            FROM visits v
+            LEFT JOIN doctors d ON v.doctor_id = d.doctor_id
+            WHERE v.patient_id = %s
+            AND v.followup_date IS NOT NULL
+            ORDER BY v.visit_datetime DESC
+            LIMIT 1
+        """
+        
+        result = Database.execute_query(query, (patient_id,), fetch_one=True)
+        
+        if result:
+            return jsonify({
+                'has_followup_today': bool(result['is_today']),
+                'followup_date': result['followup_date'].strftime('%Y-%m-%d') if result['followup_date'] else None,
+                'previous_visit_id': result['visit_id'],
+                'previous_doctor_id': result['doctor_id'],
+                'previous_doctor_name': result['doctor_name']
+            }), 200
+        else:
+            return jsonify({
+                'has_followup_today': False,
+                'followup_date': None,
+                'previous_visit_id': None,
+                'previous_doctor_id': None,
+                'previous_doctor_name': None
+            }), 200
+            
+    except Exception as e:
+        print(f"Error checking follow-up: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Failed to check follow-up status'}), 500
