@@ -180,6 +180,70 @@ def get_invoice(current_user, invoice_id):
         return jsonify({'error': 'Failed to retrieve invoice'}), 500
 
 
+
+@billing_bp.route('/api/patients/<patient_id>/visits', methods=['GET'])
+@token_required
+def get_patient_visits(current_user, patient_id):
+    """
+    Get all visits for a specific patient
+    
+    Response:
+        Array of visit objects with department, doctor, status, and billing info
+    """
+    try:
+        query = """
+            SELECT 
+                v.visit_id,
+                v.visit_datetime,
+                v.check_in_datetime,
+                v.notes as chief_complaint,
+                v.followup_date,
+                vs.name as status_name,
+                vs.status_id,
+                CONCAT(d.first_name, ' ', d.last_name) as doctor_name,
+                dep.name as department_name,
+                b.bill_id,
+                b.amount_total,
+                b.status as bill_status
+            FROM visits v
+            LEFT JOIN visit_status vs ON v.status_id = vs.status_id
+            LEFT JOIN doctors d ON v.doctor_id = d.doctor_id
+            LEFT JOIN departments dep ON d.department_id = dep.department_id
+            LEFT JOIN bills b ON v.visit_id = b.visit_id
+            WHERE v.patient_id = %s
+            ORDER BY v.visit_datetime DESC
+        """
+        
+        visits = Database.execute_query(query, (patient_id,))
+        
+        # Format visits for frontend
+        formatted_visits = []
+        for visit in visits:
+            formatted_visit = {
+                'visitId': visit['visit_id'],
+                'visitDate': visit['visit_datetime'].strftime('%b %d, %Y %I:%M %p') if visit['visit_datetime'] else 'N/A',
+                'checkInDate': visit['check_in_datetime'].strftime('%b %d, %Y %I:%M %p') if visit['check_in_datetime'] else None,
+                'chiefComplaint': visit['chief_complaint'] or 'Not specified',
+                'followupDate': visit['followup_date'].strftime('%b %d, %Y') if visit['followup_date'] else None,
+                'statusName': visit['status_name'],
+                'statusId': visit['status_id'],
+                'doctorName': visit['doctor_name'] or 'Not assigned',
+                'departmentName': visit['department_name'] or 'Not specified',
+                'billId': visit['bill_id'],
+                'billTotal': float(visit['amount_total']) if visit['amount_total'] else 0,
+                'billStatus': visit['bill_status']
+            }
+            formatted_visits.append(formatted_visit)
+        
+        return jsonify(formatted_visits), 200
+        
+    except Exception as e:
+        print(f"Error getting patient visits: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Failed to retrieve patient visits'}), 500
+
+
 @billing_bp.route('/api/invoices/<invoice_id>', methods=['PATCH'])
 @token_required
 def update_invoice(current_user, invoice_id):
